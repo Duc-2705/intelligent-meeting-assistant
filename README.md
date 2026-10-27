@@ -204,6 +204,11 @@ transcript sạch tên người là điều kiện để Tuần 3 gán đúng `a
 diarization (biết ai nói) hay word-level timestamps trong cùng một request — Gemini
 sẽ từ chối. Phải chọn một. Hiện tại code đang chọn `custom_vocabulary`.
 
+**File `.mp4`:** Gemini gắn mime theo nội dung nên file mp4 thành `video/mp4`, mà
+model phiên âm chỉ đọc được audio — gửi nguyên `video/mp4` cho ra 1 token và
+transcript rỗng. Backend tự ép sang `audio/mp4` trước khi gọi, nên cứ upload mp4
+bình thường. Lần upload đầu có thể mất vài giây chờ Gemini xử lý; backend đã tự chờ.
+
 **Giới hạn free tier:** khoảng 5 request/phút và 20 request/ngày. Audio tối đa
 1 giờ mỗi request; giảm còn 30 phút nếu bật diarization hoặc timestamps.
 Audio gửi ở free tier **được Google dùng để cải thiện sản phẩm** — phải nêu rõ
@@ -227,6 +232,8 @@ nhập "Minh Đức" mà dùng chung identity thì một máy sẽ bị đá ra.
 | `could not parse config: control characters` | File YAML bị ghi kèm BOM | `start-livekit.ps1` đã ghi UTF-8 không BOM; đừng sửa file bằng `Set-Content -Encoding utf8` |
 | Một máy bị đá ra khi máy kia vào | Trùng `identity` | Đã xử lý ở backend; nếu tự sửa thì nhớ giữ identity duy nhất |
 | Nghe thấy tiếng vọng | Hai máy chung một phòng, loa hắt vào micro | Dùng tai nghe |
+| Phiên âm báo *"đọc được N token nhưng không tìm thấy tiếng nói"* | File có track âm thanh nhưng im lặng hoặc chỉ có nhạc | Kiểm tra micro lúc ghi âm. Đây là lỗi hay gặp nhất với bản ghi màn hình |
+| Phiên âm báo *"không đọc được âm thanh nào"* (0 token) | File không có track tiếng, hoặc codec không hỗ trợ | Chuyển sang WAV/MP3 bằng công cụ khác rồi thử lại |
 | `listen tcp 7881: bind` | Còn LiveKit cũ đang chạy | `Get-Process livekit-server \| Stop-Process -Force` |
 
 **Lưu ý về script `.ps1`:** Windows PowerShell 5.1 đọc file `.ps1` không có BOM

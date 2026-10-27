@@ -249,6 +249,45 @@ async def list_participants(room: str) -> list[Participant]:
 # --- Phiên âm file audio (Tuần 2) -----------------------------------------
 
 
+def _wait_until_active(client, uploaded, timeout_seconds: float = 120.0):
+    """Chờ Gemini xử lý xong file vừa upload.
+
+    Gọi phiên âm ngay sau khi upload sẽ nhận về 0 token với file lớn, vì file
+    còn ở trạng thái PROCESSING. Lỗi này rất khó đoán vì API vẫn trả status
+    "completed" — chỉ có số token bằng 0 mới tố cáo.
+    """
+    deadline = time.monotonic() + timeout_seconds
+    while True:
+        state = str(getattr(uploaded, "state", ""))
+        if state.endswith("ACTIVE"):
+            return uploaded
+        if state.endswith("FAILED"):
+            raise HTTPException(
+                status_code=502,
+                detail="Gemini không xử lý được file này (trạng thái FAILED).",
+            )
+        if time.monotonic() > deadline:
+            raise HTTPException(
+                status_code=504,
+                detail="Gemini xử lý file quá lâu. Thử lại hoặc dùng file nhỏ hơn.",
+            )
+        time.sleep(0.5)
+        uploaded = client.files.get(name=uploaded.name)
+
+
+def _audio_mime_for(mime_type: str | None) -> str:
+    """Ép mime của container video về dạng audio tương ứng.
+
+    Gemini gắn mime theo nội dung, nên file .mp4 thành "video/mp4". Model phiên
+    âm chỉ đọc được audio: gửi video/mp4 cho ra 1 token và transcript rỗng,
+    trong khi audio/mp4 đọc đúng track tiếng (100 token với cùng file đó).
+    """
+    mime = mime_type or "audio/mp4"
+    if mime.startswith("video/"):
+        return "audio/" + mime.split("/", 1)[1]
+    return mime
+
+
 @app.post("/api/transcribe", response_model=TranscriptionResult)
 def transcribe_audio(
     file: UploadFile = File(..., description="File audio cần phiên âm"),
@@ -302,6 +341,7 @@ def transcribe_audio(
 
         client = genai.Client(api_key=GEMINI_API_KEY)
         uploaded = client.files.upload(file=tmp_path)
+        uploaded = _wait_until_active(client, uploaded)
 
         transcription_config: dict = {"language_codes": []}
         if vocabulary:
@@ -315,7 +355,7 @@ def transcribe_audio(
                 {
                     "type": "audio",
                     "uri": uploaded.uri,
-                    "mime_type": uploaded.mime_type,
+                    "mime_type": _audio_mime_for(uploaded.mime_type),
                 }
             ],
             generation_config={"transcription_config": transcription_config},
@@ -323,9 +363,25 @@ def transcribe_audio(
 
         transcript = (interaction.output_text or "").strip()
         if not transcript:
+            # Phân biệt hai nguyên nhân rất khác nhau, vì cách xử lý khác nhau.
+            usage = interaction.model_dump().get("usage") or {}
+            input_tokens = usage.get("total_input_tokens", 0) or 0
+            if input_tokens < 10:
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        "Gemini không đọc được âm thanh nào từ file này "
+                        f"({input_tokens} token). File có thể không có track tiếng, "
+                        "hoặc dùng codec không hỗ trợ. Thử chuyển sang WAV hoặc MP3."
+                    ),
+                )
             raise HTTPException(
-                status_code=502,
-                detail="Gemini trả về transcript rỗng. Kiểm tra file có tiếng nói không.",
+                status_code=422,
+                detail=(
+                    f"Gemini đã đọc được {input_tokens} token âm thanh nhưng không "
+                    "tìm thấy tiếng nói. Kiểm tra lại bản ghi: micro có bật không, "
+                    "âm lượng có quá nhỏ không."
+                ),
             )
 
         return TranscriptionResult(
