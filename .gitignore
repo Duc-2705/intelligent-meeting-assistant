@@ -1,0 +1,34 @@
+# Bí mật — không bao giờ commit
+.env
+*.env.local
+
+# Binary LiveKit server (~55MB). Tải riêng, xem README mục 2.
+# Commit file này sẽ làm repo phình to và không cần thiết.
+livekit/livekit-server.exe
+livekit/LICENSE
+
+# Sinh tự động khi chạy start-livekit.ps1
+livekit/livekit.generated.yaml
+
+# Log của LiveKit server
+*.log
+*.log.err
+*.err.log
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+
+# Node
+node_modules/
+dist/
+
+# Editor / OS
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
+
+# File tạm của Word
+~$*

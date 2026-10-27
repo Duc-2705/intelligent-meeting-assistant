@@ -1,0 +1,34 @@
+# Cấu hình LiveKit server cho demo 2 máy trong cùng mạng LAN.
+#
+# File này là bản mẫu. Khi chạy, dùng scripts/start-livekit.ps1 để tự sinh
+# livekit.generated.yaml với node_ip đúng của máy đang chạy server.
+#
+# Lưu ý quan trọng: rtc.node_ip PHẢI là địa chỉ mà máy thứ hai kết nối tới được.
+# Nếu để sai, máy thứ hai vẫn "join" được phòng nhưng sẽ không nghe/thấy gì,
+# vì ICE candidate trả về địa chỉ không tới được.
+#
+# Giá trị dưới đây sẽ bị scripts/start-livekit.ps1 ghi đè tự động:
+# ưu tiên IP Tailscale, không có thì lấy IP LAN.
+
+port: 7880
+
+# Nghe trên mọi interface để máy khác trong LAN vào được.
+bind_addresses:
+  - "0.0.0.0"
+
+rtc:
+  tcp_port: 7881
+  port_range_start: 7882
+  port_range_end: 7892
+  # Trong LAN thì không cần hỏi STUN để tìm IP công khai.
+  use_external_ip: false
+  node_ip: 192.168.8.104
+
+keys:
+  # CHỈ dùng cho dev. Production phải đổi và giữ kín (đặt trong .env, không commit).
+  # LiveKit từ chối secret ngắn hơn 32 ký tự.
+  devkey: devsecretdevsecretdevsecretdevsecret
+
+logging:
+  level: info
+  json: false
