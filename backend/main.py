@@ -12,13 +12,17 @@ from __future__ import annotations
 import os
 import re
 import secrets
+import shutil
 import socket
 import subprocess
+import tempfile
+import time
 import unicodedata
 from datetime import timedelta
+from pathlib import Path
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from livekit import api
 from pydantic import BaseModel, Field
@@ -79,6 +83,18 @@ LIVEKIT_URL = os.getenv("LIVEKIT_URL") or f"ws://{detect_livekit_host()}:7880"
 TOKEN_TTL_HOURS = int(os.getenv("TOKEN_TTL_HOURS", "6"))
 CORS_ORIGINS = [o.strip() for o in os.getenv("CORS_ORIGINS", "*").split(",") if o.strip()]
 
+# --- Cấu hình Gemini (Tuần 2: phiên âm file audio) ------------------------
+
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+TRANSCRIBE_MODEL = os.getenv("TRANSCRIBE_MODEL", "gemini-3.5-transcribe")
+MAX_UPLOAD_MB = int(os.getenv("MAX_UPLOAD_MB", "200"))
+
+# Định dạng Gemini Files API chấp nhận cho audio.
+_AUDIO_SUFFIXES = {
+    ".wav", ".mp3", ".m4a", ".aac", ".ogg", ".opus", ".flac",
+    ".webm", ".mp4", ".mpeg", ".mpga", ".aiff", ".aif",
+}
+
 # RoomServiceClient nói HTTP, còn browser nói WebSocket.
 LIVEKIT_HTTP_URL = LIVEKIT_URL.replace("wss://", "https://").replace("ws://", "http://")
 
@@ -118,6 +134,15 @@ class Participant(BaseModel):
     # nên đây mới là bằng chứng media thật sự chảy.
     audio_tracks: int
     video_tracks: int
+
+
+class TranscriptionResult(BaseModel):
+    transcript: str
+    model: str
+    filename: str
+    size_bytes: int
+    processing_seconds: float
+    custom_vocabulary: list[str]
 
 
 # --- Helper ---------------------------------------------------------------
@@ -219,3 +244,116 @@ async def list_participants(room: str) -> list[Participant]:
         )
         for p in result.participants
     ]
+
+
+# --- Phiên âm file audio (Tuần 2) -----------------------------------------
+
+
+@app.post("/api/transcribe", response_model=TranscriptionResult)
+def transcribe_audio(
+    file: UploadFile = File(..., description="File audio cần phiên âm"),
+    custom_vocabulary: str = Form(
+        "", description="Tên riêng / thuật ngữ, cách nhau bằng dấu phẩy"
+    ),
+) -> TranscriptionResult:
+    """Phiên âm một file audio bằng Gemini.
+
+    Cố ý là `def` chứ không phải `async def`: SDK google-genai là đồng bộ.
+    FastAPI sẽ chạy hàm này trong threadpool nên không chặn event loop —
+    nếu để `async def`, cả server sẽ đứng im trong lúc chờ Gemini trả lời.
+    """
+    if not GEMINI_API_KEY:
+        raise HTTPException(
+            status_code=500,
+            detail="Chưa cấu hình GEMINI_API_KEY. Thêm vào backend/.env rồi khởi động lại.",
+        )
+
+    suffix = Path(file.filename or "").suffix.lower()
+    if suffix not in _AUDIO_SUFFIXES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Định dạng '{suffix or '(không rõ)'}' không được hỗ trợ. "
+            f"Hợp lệ: {', '.join(sorted(_AUDIO_SUFFIXES))}",
+        )
+
+    vocabulary = [term.strip() for term in custom_vocabulary.split(",") if term.strip()]
+
+    started = time.perf_counter()
+    tmp_path: str | None = None
+    client = None
+    uploaded = None
+
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+            shutil.copyfileobj(file.file, tmp)
+            tmp_path = tmp.name
+
+        size = os.path.getsize(tmp_path)
+        if size == 0:
+            raise HTTPException(status_code=400, detail="File rỗng.")
+        if size > MAX_UPLOAD_MB * 1024 * 1024:
+            raise HTTPException(
+                status_code=413,
+                detail=f"File lớn hơn giới hạn {MAX_UPLOAD_MB} MB.",
+            )
+
+        # Import muộn: thiếu SDK thì các endpoint meeting vẫn chạy bình thường.
+        from google import genai
+
+        client = genai.Client(api_key=GEMINI_API_KEY)
+        uploaded = client.files.upload(file=tmp_path)
+
+        transcription_config: dict = {"language_codes": []}
+        if vocabulary:
+            # custom_vocabulary KHÔNG dùng chung được với diarization hay
+            # timestamp — Gemini sẽ từ chối request nếu gộp cả hai.
+            transcription_config["custom_vocabulary"] = vocabulary
+
+        interaction = client.interactions.create(
+            model=TRANSCRIBE_MODEL,
+            input=[
+                {
+                    "type": "audio",
+                    "uri": uploaded.uri,
+                    "mime_type": uploaded.mime_type,
+                }
+            ],
+            generation_config={"transcription_config": transcription_config},
+        )
+
+        transcript = (interaction.output_text or "").strip()
+        if not transcript:
+            raise HTTPException(
+                status_code=502,
+                detail="Gemini trả về transcript rỗng. Kiểm tra file có tiếng nói không.",
+            )
+
+        return TranscriptionResult(
+            transcript=transcript,
+            model=TRANSCRIBE_MODEL,
+            filename=file.filename or f"audio{suffix}",
+            size_bytes=size,
+            processing_seconds=round(time.perf_counter() - started, 2),
+            custom_vocabulary=vocabulary,
+        )
+
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001 — prototype: trả lỗi thô cho dễ debug
+        message = str(exc)
+        lowered = message.lower()
+        if "quota" in lowered or "rate limit" in lowered or "429" in lowered:
+            raise HTTPException(
+                status_code=429,
+                detail="Vượt hạn mức Gemini (free tier khoảng 20 request/ngày). "
+                f"Chi tiết: {message}",
+            ) from exc
+        raise HTTPException(status_code=502, detail=f"Gemini trả lỗi: {message}") from exc
+    finally:
+        if tmp_path:
+            Path(tmp_path).unlink(missing_ok=True)
+        if client is not None and uploaded is not None:
+            try:
+                client.files.delete(name=uploaded.name)
+            except Exception:  # noqa: BLE001 — file tự hết hạn sau 48h
+                pass

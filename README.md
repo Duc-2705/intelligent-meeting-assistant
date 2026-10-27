@@ -183,6 +183,31 @@ hai máy ở trên.
 | `GET` | `/api/health` | Kiểm tra backend sống, xem `livekit_url` đang dùng |
 | `POST` | `/api/token` | Cấp join token. Body: `{"room": "...", "display_name": "..."}` |
 | `GET` | `/api/rooms/{room}/participants` | Ai đang trong phòng — dùng để kiểm chứng |
+| `POST` | `/api/transcribe` | Phiên âm file audio (multipart: `file`, `custom_vocabulary`) |
+
+### Phiên âm file ghi âm
+
+Mở <http://localhost:5173/transcribe>, hoặc bấm "Phiên âm file ghi âm có sẵn" ở màn hình vào phòng.
+
+Kéo file audio vào, nhập danh sách tên riêng, bấm **Phiên âm**. Transcript hiện ra sau
+khoảng 5–30 giây tuỳ độ dài file.
+
+Cần `GEMINI_API_KEY` trong `backend/.env`, lấy miễn phí tại
+<https://aistudio.google.com/apikey>.
+
+**Vì sao có ô "Từ vựng riêng":** đây không phải tính năng phụ. Khi thử với audio
+mẫu, "Minh" bị nhận thành "Manuel" và "Duc" thành "Duke". Thêm tên vào
+`custom_vocabulary` thì sửa được hoàn toàn, và còn nhanh hơn. Với đồ án này,
+transcript sạch tên người là điều kiện để Tuần 3 gán đúng `assignee` cho task.
+
+**Ràng buộc cần nhớ:** `custom_vocabulary` **không dùng chung được** với
+diarization (biết ai nói) hay word-level timestamps trong cùng một request — Gemini
+sẽ từ chối. Phải chọn một. Hiện tại code đang chọn `custom_vocabulary`.
+
+**Giới hạn free tier:** khoảng 5 request/phút và 20 request/ngày. Audio tối đa
+1 giờ mỗi request; giảm còn 30 phút nếu bật diarization hoặc timestamps.
+Audio gửi ở free tier **được Google dùng để cải thiện sản phẩm** — phải nêu rõ
+điều này trong form consent, và buổi demo nên dùng audio giả lập.
 
 Xem thử nhanh tại `http://localhost:8000/docs`.
 
@@ -221,17 +246,27 @@ Chèn tiếng Việt có dấu vào đó sẽ bị lỗi font khi chạy.
 - Frontend phục vụ được và proxy `/api/*` sang backend thông
 - **Hai client vào cùng một phòng và mỗi client publish đủ 1 track audio + 1 track video**
   (`scripts/verify-two-clients.ps1`, dùng Chrome headless với thiết bị giả)
+- **Luồng upload → phiên âm → hiển thị chạy trọn vẹn trên trình duyệt thật**
+  (điều khiển Chrome qua DevTools Protocol: nạp file, bấm nút, đọc transcript từ DOM)
+- `custom_vocabulary` sửa được lỗi sai tên riêng, và làm request nhanh hơn
 
-**Chưa kiểm chứng:** âm thanh và hình ảnh thật giữa hai máy có micro/loa riêng. Phần
-mềm đã đúng tới hết đường truyền media, nhưng còn phụ thuộc micro/loa và quyền
-trình duyệt trên từng máy. Đây là việc của nhóm khi demo — dùng mục 4 để kiểm chứng.
+**Chưa kiểm chứng:**
+
+- Âm thanh và hình ảnh thật giữa hai máy có micro/loa riêng. Phần mềm đã đúng tới hết
+  đường truyền media, nhưng còn phụ thuộc micro/loa và quyền trình duyệt trên từng máy.
+- **Chất lượng phiên âm tiếng Việt.** Toàn bộ test dùng giọng TTS tiếng Anh có sẵn của
+  Windows. Tiếng Việt phải đo riêng bằng bộ audio tham chiếu và tính WER — đây là việc
+  của Tuần 2, chưa làm.
 
 ---
 
-## 8. Bước tiếp theo (Tuần 2)
+## 8. Bước tiếp theo
 
-- API upload audio + tích hợp STT
-- Lưu transcript theo `meeting_id`
+Đã xong phần khó nhất của Tuần 2: upload file và gọi STT. Còn lại:
+
+- **Đo WER trên tiếng Việt** — chuẩn bị 3–5 audio mẫu có transcript tham chiếu
+- **Lưu transcript theo `meeting_id`** — hiện kết quả chỉ trả về, chưa ghi vào database
+- **Chốt `custom_vocabulary` hay diarization** — quyết định này đổi schema bảng `transcripts`
 - Summary và task extraction theo JSON schema
 
 Lưu ý từ kế hoạch: audio trong phòng họp **không tự động** thành đầu vào của AI.

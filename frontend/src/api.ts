@@ -47,3 +47,34 @@ export async function fetchParticipants(room: string): Promise<Participant[]> {
   if (!res.ok) throw new Error(await readError(res))
   return (await res.json()) as Participant[]
 }
+
+export interface TranscriptionResult {
+  transcript: string
+  model: string
+  filename: string
+  size_bytes: number
+  processing_seconds: number
+  custom_vocabulary: string[]
+}
+
+export async function transcribeAudio(
+  file: File,
+  customVocabulary: string,
+): Promise<TranscriptionResult> {
+  const form = new FormData()
+  form.append('file', file)
+  form.append('custom_vocabulary', customVocabulary)
+
+  let res: Response
+  try {
+    // Không đặt Content-Type: trình duyệt phải tự sinh boundary cho multipart.
+    res = await fetch(`${API_BASE}/api/transcribe`, { method: 'POST', body: form })
+  } catch {
+    throw new Error(
+      'Không gọi được backend. Kiểm tra backend đã chạy chưa (scripts/start-backend.ps1).',
+    )
+  }
+
+  if (!res.ok) throw new Error(await readError(res))
+  return (await res.json()) as TranscriptionResult
+}

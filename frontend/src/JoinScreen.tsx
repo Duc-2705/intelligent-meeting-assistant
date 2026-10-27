@@ -112,6 +112,12 @@ export default function JoinScreen({ onJoin, onError, error }: Props) {
         <p className="mt-4 text-xs leading-relaxed text-white/50">
           Trình duyệt sẽ hỏi quyền dùng micro và camera. Cần bật quyền thì mới nghe/nói được.
         </p>
+
+        <p className="mt-3 border-t border-white/10 pt-3 text-center text-xs">
+          <a href="/transcribe" className="text-sky-400 hover:underline">
+            Phiên âm file ghi âm có sẵn →
+          </a>
+        </p>
       </form>
     </div>
   )

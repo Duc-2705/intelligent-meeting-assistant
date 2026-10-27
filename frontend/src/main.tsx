@@ -6,8 +6,14 @@ import './styles.css'
 import '@livekit/components-styles'
 
 import App from './App'
+import TranscribePage from './TranscribePage'
 
 const container = document.getElementById('root')
 if (!container) throw new Error('Không tìm thấy phần tử #root trong index.html')
 
-createRoot(container).render(<App />)
+// Định tuyến tối giản, không cần thư viện router: hai trang là hai nhánh.
+// Vite dev server tự trả index.html cho mọi path nên /transcribe mở được.
+const path = window.location.pathname.replace(/\/+$/, '')
+const isTranscribe = path === '/transcribe'
+
+createRoot(container).render(isTranscribe ? <TranscribePage /> : <App />)
